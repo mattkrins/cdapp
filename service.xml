@@ -1,6 +1,6 @@
 <service>
     <id>cdapp</id>
-    <description>Provision LDAP Users from CSV files</description>
+    <description>Automate the management of LDAP and other targets using CSV and other sources.</description>
     <executable>node</executable>
     <arguments>server.js</arguments>
     <delayedAutoStart>true</delayedAutoStart>

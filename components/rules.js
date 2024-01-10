@@ -30,11 +30,11 @@ async function getRows(connector, attribute) {
             await client.connect(connector.url);
             const password = await decrypt(connector.password);
             await client.login(connector.username, password);
-            let base = await client.getRoot();
+            let base = connector.dse || await client.getRoot();
             if ((connector.base || '') !== '')
                 base = `${connector.base},${base}`;
             client.base = base;
-            const mustHave = ['sAMAccountName', 'userPrincipalName', 'cn', 'distinguishedName', 'userAccountControl', 'memberOf'];
+            const mustHave = ['sAMAccountName', 'userPrincipalName', 'cn', 'uid', 'distinguishedName', 'userAccountControl', 'memberOf'];
             let attributes = [];
             if (connector.attributes.length > 0) {
                 attributes = connector.attributes;
@@ -186,7 +186,7 @@ export default async function findMatches(schema, rule, limitTo) {
         }
         const connections = { ...secondaries, [rule.primary]: primary };
         const todo = await getActions(rule.actions, connections, template, !!limitTo);
-        const display = rule.display !== '' ? Handlebars.compile(rule.display)(template) : id;
+        const display = (rule.display && rule.display !== '') ? Handlebars.compile(rule.display)(template) : id;
         if (!(await matchedAllConditions(rule.conditions, template, connections, id)))
             continue;
         const actionable = todo.filter(t => t.result.warning || t.result.error).length <= 0;

@@ -124,9 +124,11 @@ export default async function schedule(route) {
         try {
             if (type === "Monitor") {
                 delete body.cron;
-                validate(body, {
+                const invalid = await validate(body, {
                     monitor: isPathValid(),
                 }, reply);
+                if (invalid)
+                    return;
             }
             else {
                 delete body.monitor;
@@ -189,9 +191,11 @@ export default async function schedule(route) {
                 throw reply.code(404).send({ validation: { name: "Schedule ID does not exist." } });
             if (type === "Monitor") {
                 delete body.cron;
-                validate(body, {
+                const invalid = await validate(body, {
                     monitor: isPathValid(),
                 }, reply);
+                if (invalid)
+                    return;
             }
             else {
                 delete body.monitor;

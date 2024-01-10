@@ -21,10 +21,12 @@ export async function validate(formData, validators, reply, body) {
             validation[field] = _Error(e).message;
         }
     }
-    if (reply && Object.keys(validation).length > 0)
-        return reply.code(400).send({ validation });
-    if (Object.keys(validation).length > 0)
+    if (Object.keys(validation).length > 0) {
+        if (reply)
+            reply.code(400).send({ validation });
         return validation;
+    }
+    return false;
 }
 export function form(validation = {}) {
     return {
@@ -62,13 +64,22 @@ export function hasLength(options, error = 'Does not meet requirements.') {
         (options.max ? (String(value)).length > options.max : false)) && error;
 }
 export function validWindowsFilename(error = 'Not a valid windows filename.') {
-    const invalidChars = /[<>:"/\\|?*]/g;
+    const invalidChars = /[<>:"/\\|?*]/;
     const reservedNames = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i;
     return (value) => {
         if (!value)
             return error;
         const filename = value;
         const valid = !invalidChars.test(filename) && !reservedNames.test(filename) && filename.length <= 260 && filename.length > 0;
+        return !valid && error;
+    };
+}
+export function validConnectorName(error = 'Connector name may only contain alphanumeric, - and _ characters.') {
+    return (value) => {
+        if (isNotEmpty('e')(value))
+            return 'Name can not be empty.';
+        const validCharacters = /^[a-zA-Z0-9_-]*$/;
+        const valid = validCharacters.test(value);
         return !valid && error;
     };
 }
