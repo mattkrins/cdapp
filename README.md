@@ -1,6 +1,7 @@
 ![logo](https://github.com/mattkrins/cdapp/assets/2367602/348236a9-0eb8-4071-b3f3-1bac955aac62)
 # cdapp
-Automate the management of LDAP and other targets using CSV and other sources.
+Automate the management of LDAP and other targets using CSV and other sources.\
+Documentation and the installation guide can be found on the [repository wiki](https://github.com/mattkrins/cdapp/wiki/Getting-started-with-CDAPP#part-2-running-and-configuring).
 
 ## Installation
 Clone / download repository and in the root folder run:
