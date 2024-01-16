@@ -5,9 +5,7 @@ import { default as ldap_ } from "../modules/ldap.js";
 import { decrypt } from "../modules/cryptography.js";
 import { HttpProxyAgent } from 'http-proxy-agent';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import eduSTAR from "../modules/eduSTAR.js";
-import { getSchema } from "../routes/schema.js";
-import { CSV } from "../components/providers.js";
+import { CSV, STMC } from "../components/providers.js";
 const Axios = axios;
 export async function validate(formData, validators, reply, body) {
     const validation = {};
@@ -177,22 +175,8 @@ function isSchoolValid() {
             return 'School ID can not be empty.';
         const { schema_name } = request?.params;
         const { school, proxy, ...body } = request?.body;
-        const schema = getSchema(schema_name);
-        const options = {
-            school,
-        };
-        if (proxy && String(proxy).trim() !== "") {
-            if (!schema._connectors[proxy])
-                return "Proxy connector does not exist.";
-            const connector = schema._connectors[proxy];
-            const url = new URL(connector.url);
-            if (connector.username)
-                url.username = connector.username;
-            if (connector.password)
-                url.password = await decrypt(connector.password);
-            options.proxy = url;
-        }
-        const client = new eduSTAR(options);
+        const stmc = new STMC(schema_name, school, proxy);
+        const client = await stmc.configure();
         await client.validate();
         try {
             const password = await decrypt(body.password);

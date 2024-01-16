@@ -18,11 +18,14 @@ export const getHeaders = {
             'sAMAccountName', 'userPrincipalName', 'cn', 'distinguishedName'
         ].filter((b, index, self) => index === self.findIndex((a) => (a === b)));
     },
-    stmc: async function () {
-        return ['_class', '_cn', '_desc', '_disabled', '_displayName', '_dn', '_firstName',
+    stmc: async function (connector) {
+        const headers = ['_class', '_cn', '_desc', '_disabled', '_displayName', '_dn', '_firstName',
             '_google', '_intune', '_lastLogon', '_lastName', '_lastPwdResetViaMC', '_lockedOut',
             '_login', '_o365', '_pwdExpired', '_pwdExpires', '_pwdLastSet',
             '_pwdNeverExpires', '_pwdResetAction', '_pwdResetTech', '_yammer'];
+        if (String(connector.eduhub).trim() !== "")
+            headers.push('_eduhub');
+        return headers;
     },
 };
 export default function connector(route) {

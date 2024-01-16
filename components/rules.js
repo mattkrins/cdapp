@@ -1,4 +1,4 @@
-import { CSV } from "./providers.js";
+import { CSV, STMC } from "./providers.js";
 import ldap from "../modules/ldap.js";
 import { decrypt } from "../modules/cryptography.js";
 import Handlebars from "handlebars";
@@ -18,8 +18,22 @@ import deleteFolder from "./actions/FolderDelete.js";
 import deleteUser from "./actions/DirDeleteUser.js";
 import moveOU from "./actions/DirMoveOU.js";
 import updateAtt from "./actions/DirUpdateAtt.js";
-async function getRows(connector, attribute) {
+async function getRows(connector, schema_name, attribute) {
     switch (connector.id) {
+        case 'stmc': {
+            const stmc = new STMC(schema_name, connector.school, connector.proxy, connector.eduhub);
+            const client = await stmc.configure();
+            const password = await decrypt(connector.password);
+            server.io.emit("job_status", "Logging into STMC");
+            await client.login(connector.username, password);
+            server.io.emit("job_status", "Downloading STMC data");
+            let users = await client.getUsers();
+            if (connector.eduhub) {
+                server.io.emit("job_status", "Matching eduhub data");
+                users = client.bindEduhub();
+            }
+            return { rows: users, connector, object: {} };
+        }
         case 'csv': {
             const csv = new CSV(connector.path);
             const data = await csv.open();
@@ -148,11 +162,11 @@ export default async function findMatches(schema, rule, limitTo) {
     server.io.emit("global_status", { schema: schema.name, rule: rule.name, running: !!limitTo });
     server.io.emit("job_status", "Loading Primary");
     const primaryConnector = schema._connectors[rule.primary];
-    const primary = await getRows(primaryConnector, rule.primaryKey);
+    const primary = await getRows(primaryConnector, schema.name, rule.primaryKey);
     server.io.emit("job_status", "Loading Secondaries");
     const secondaries = {};
     for (const secondary of rule.secondaries || []) {
-        const rows = await getRows(schema._connectors[secondary.primary], secondary.secondaryKey);
+        const rows = await getRows(schema._connectors[secondary.primary], schema.name, secondary.secondaryKey);
         secondaries[secondary.primary] = { ...rows, ...secondary };
     }
     server.io.emit("job_status", "Matching Data");
