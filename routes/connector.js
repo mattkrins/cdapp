@@ -164,6 +164,24 @@ export default function connector(route) {
             reply.code(500).send({ error: error.message });
         }
     });
+    route.post('/:connector_name/test', async (request, reply) => {
+        const { schema_name, connector_name } = request.params;
+        try {
+            const schema = getSchema(schema_name, reply);
+            if (!schema._connectors[connector_name])
+                throw reply.code(404).send({ validation: { name: "Connector does not exist." } });
+            const connector = schema._connectors[connector_name];
+            if (!validators[connector.id])
+                throw Error("Unknown provider.");
+            request.body = { ...connector };
+            await validate(connector, validators[connector.id], reply, request);
+            return connector.name;
+        }
+        catch (e) {
+            const error = _Error(e);
+            reply.code(500).send({ error: error.message });
+        }
+    });
     route.delete('/:connector_name', async (request, reply) => {
         const { schema_name, connector_name } = request.params;
         try {

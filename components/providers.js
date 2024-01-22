@@ -21,12 +21,12 @@ export class CSV {
         this.encoding = encoding || 'utf8';
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    open() {
+    open(header = true) {
         return new Promise((resolve, reject) => {
             try {
                 const file = fs.createReadStream(this.path, this.encoding);
                 Papa.parse(file, {
-                    header: true,
+                    header,
                     complete: resolve,
                     error: reject
                 });

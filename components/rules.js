@@ -18,9 +18,13 @@ import deleteFolder from "./actions/FolderDelete.js";
 import deleteUser from "./actions/DirDeleteUser.js";
 import moveOU from "./actions/DirMoveOU.js";
 import updateAtt from "./actions/DirUpdateAtt.js";
+import fileWriteTxt from "./actions/FileWriteTxt.js";
+import encryptString from "./actions/EncryptString.js";
+import stmcUpload from "./actions/StmcUpload.js";
+import folderCreate from "./actions/FolderCreate.js";
 async function getRows(connector, schema_name, attribute) {
     switch (connector.id) {
-        case 'stmc': {
+        case 'stmc': { //FIXME - io.emit stops working in the STMC connector. https://github.com/mattkrins/cdapp/issues/8
             const stmc = new STMC(schema_name, connector.school, connector.proxy, connector.eduhub);
             const client = await stmc.configure();
             const password = await decrypt(connector.password);
@@ -32,7 +36,7 @@ async function getRows(connector, schema_name, attribute) {
                 server.io.emit("job_status", "Matching eduhub data");
                 users = client.bindEduhub();
             }
-            return { rows: users, connector, object: {} };
+            return { rows: users, client, connector, object: {} };
         }
         case 'csv': {
             const csv = new CSV(connector.path);
@@ -41,8 +45,10 @@ async function getRows(connector, schema_name, attribute) {
         }
         case 'ldap': {
             const client = new ldap();
+            server.io.emit("job_status", `Connecting to: ${connector.url}`);
             await client.connect(connector.url);
             const password = await decrypt(connector.password);
+            server.io.emit("job_status", `Logging into: ${connector.url}`);
             await client.login(connector.username, password);
             let base = connector.dse || await client.getRoot();
             if ((connector.base || '') !== '')
@@ -56,11 +62,42 @@ async function getRows(connector, schema_name, attribute) {
                     if (!attributes.includes(a))
                         attributes.push(a);
             }
+            server.io.emit("job_status", `Loading users`);
             const { array, object } = await client.getUsers(attributes, attribute);
             return { rows: array, client, connector, object };
         }
         default: throw Error("Unknown connector.");
     }
+}
+async function releaseFileHandles(fileHandles) {
+    function closeStream(stream) {
+        return new Promise((resolve, reject) => {
+            if (!stream)
+                return resolve();
+            stream.close((e) => e ? reject(e) : resolve());
+        });
+    }
+    for (const file of Object.values(fileHandles)) {
+        if (file.type === "fileStream")
+            await closeStream(file.handle);
+        delete fileHandles[file.id];
+    }
+}
+async function cleanup(fileHandles, connections) {
+    server.io.emit("job_status", "Cleaning up");
+    await releaseFileHandles(fileHandles); // Release file handles
+    for (const connection of Object.values(connections)) { // Close connector connections
+        switch (connection.connector.id) {
+            case 'ldap': {
+                const client = connection.client;
+                await client.close();
+                break;
+            }
+            default: continue;
+        }
+    }
+    server.io.emit("job_status", "Idle");
+    server.io.emit("global_status", {});
 }
 async function match(operator, key, value, connections, id) {
     const user = (key in connections) && (id in connections[key].object) && connections[key].object[id];
@@ -119,33 +156,37 @@ const actionMap = {
     'Update Attributes': updateAtt,
     'Write PDF': writePDF,
     'Send To Printer': sendToPrinter,
+    'Write To File': fileWriteTxt,
     'Delete File': deleteFile,
     'Move File': moveFile,
     'Copy File': copyFile,
     'Copy Folder': copyFolder,
     'Move Folder': moveFolder,
     'Delete Folder': deleteFolder,
+    'Create Folder': folderCreate,
     'Template': templateData,
+    'Encrypt String': encryptString,
+    'Upload Student Passwords': stmcUpload,
     //NOTE - Should work in theory, but not currently implemented due to arbitrary code execution vulnerability concerns:
     //LINK - server\src\components\actions\SysRunCommand.tsx
     // 'Run Command': runCommand,
     //REVIEW - add icacls? might also be vulnerable. https://4sysops.com/archives/icacls-list-set-grant-remove-and-deny-permissions/
 };
-async function getActions(actions, connections, template, execute = false) {
+async function getActions(actions, connections, template, fileHandles, execute = false, close = false) {
     const todo = [];
     let _template = template;
-    for (const action of actions) {
+    for (const action of (actions || [])) {
         if (!(action.name in actionMap))
             continue;
-        const result = await actionMap[action.name](execute, action, _template, connections);
+        const result = await actionMap[action.name](execute, action, _template, connections, fileHandles, close);
         if (result.template && result.data) {
             _template = { ..._template, ...result.data };
         }
         todo.push({ name: action.name, result });
         if (result.error || result.warning)
-            return todo;
+            return { todo, _template };
     }
-    return todo;
+    return { todo, _template };
 }
 function calculateTimeRemaining(currentWork, totalWork, speed) {
     if (speed <= 0)
@@ -169,12 +210,21 @@ export default async function findMatches(schema, rule, limitTo) {
         const rows = await getRows(schema._connectors[secondary.primary], schema.name, secondary.secondaryKey);
         secondaries[secondary.primary] = { ...rows, ...secondary };
     }
-    server.io.emit("job_status", "Matching Data");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const matches = [];
     let i = 0;
     if (limitTo)
         primary.rows = primary.rows.filter(p => limitTo.includes(p[rule.primaryKey]));
+    const fileHandles = {};
+    const connections = { ...secondaries, [rule.primary]: primary };
+    if ((rule.before_actions || []).length > 0)
+        server.io.emit("job_status", `${!limitTo ? 'Checking' : 'Running'} Init Actions`);
+    const { todo: initActions, _template: initTemplate } = await getActions(rule.before_actions, connections, {}, fileHandles, !!limitTo);
+    const initErrors = initActions.filter(r => r.result.error);
+    if (initErrors.length > 0) {
+        await cleanup(fileHandles, connections);
+        return { matches, initActions };
+    }
+    server.io.emit("job_status", "Matching Data");
     for (const object of primary.rows) {
         const id = object[rule.primaryKey];
         i++;
@@ -185,7 +235,7 @@ export default async function findMatches(schema, rule, limitTo) {
             server.io.emit("job_status", `Proccessing ${id}`);
             curTime = (new Date()).getTime();
         }
-        const template = {};
+        const template = { ...initTemplate };
         template[`${rule.primary}`] = object;
         for (const name of Object.keys(secondaries)) {
             const secondary = secondaries[name];
@@ -198,17 +248,19 @@ export default async function findMatches(schema, rule, limitTo) {
                 continue;
             template[`${name}`] = found || {};
         }
-        const connections = { ...secondaries, [rule.primary]: primary };
-        const todo = await getActions(rule.actions, connections, template, !!limitTo);
-        const display = (rule.display && rule.display !== '') ? Handlebars.compile(rule.display)(template) : id;
         if (!(await matchedAllConditions(rule.conditions, template, connections, id)))
             continue;
+        const display = (rule.display && rule.display !== '') ? Handlebars.compile(rule.display)(template) : id;
+        const { todo } = await getActions(rule.actions, connections, template, fileHandles, !!limitTo);
         const actionable = todo.filter(t => t.result.warning || t.result.error).length <= 0;
         matches.push({ id, display, actions: todo, actionable });
     }
-    server.io.emit("job_status", "Idle");
-    server.io.emit("global_status", {});
-    return matches;
+    if ((rule.after_actions || []).length > 0)
+        server.io.emit("job_status", `${!limitTo ? 'Checking' : 'Running'} Final Actions`);
+    await releaseFileHandles(fileHandles); // Release before final actions to prevent file locking after bulk actions.
+    const { todo: finalActions } = await getActions(rule.after_actions, connections, initTemplate, fileHandles, !!limitTo, true);
+    await cleanup(fileHandles, connections);
+    return { matches, initActions, finalActions };
 }
 export async function runActionFor(schema, rule, limitTo) {
     if (!limitTo || limitTo.length <= 0)

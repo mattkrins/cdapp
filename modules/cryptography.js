@@ -1,14 +1,22 @@
 import crypto from 'crypto';
 import { keyring } from "@zowe/secrets-for-zowe-sdk";
-function salt(key) {
+function salt(key, iterationCount = 100000) {
     return new Promise((resolve, reject) => {
-        crypto.pbkdf2(key, 'salt', 100000, 32, 'sha512', (err, derivedKey) => {
+        crypto.pbkdf2(key, 'salt', iterationCount, 32, 'sha512', (err, derivedKey) => {
             if (err)
                 reject(err);
             else
                 resolve(derivedKey);
         });
     });
+}
+export async function encryptString(secret, key, strength = 100000) {
+    const derivedKey = await salt(key, strength);
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv('aes-256-cbc', derivedKey, iv);
+    let encrypted = cipher.update(secret, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    return { encrypted, iv: iv.toString('hex') };
 }
 export let key;
 async function regenerate(force = false) {
@@ -26,18 +34,13 @@ async function regenerate(force = false) {
 export async function encrypt(secret) {
     if (!key)
         await regenerate();
-    const derivedKey = await salt(key);
-    const iv = crypto.randomBytes(16);
-    const cipher = crypto.createCipheriv('aes-256-cbc', derivedKey, iv);
-    let encrypted = cipher.update(secret, 'utf8', 'hex');
-    encrypted += cipher.final('hex');
-    return { encrypted, iv: iv.toString('hex') };
+    return encryptString(secret, key);
 }
-export async function decrypt(hash) {
+export async function decrypt(hash, strength = 100000) {
     if (!key)
         await regenerate();
     try {
-        const derivedKey = await salt(key);
+        const derivedKey = await salt(key, strength);
         const decipher = crypto.createDecipheriv('aes-256-cbc', derivedKey, Buffer.from(hash.iv, 'hex'));
         decipher.setAutoPadding(true);
         let decrypted = decipher.update(hash.encrypted, 'hex', 'utf8');

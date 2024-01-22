@@ -10,7 +10,8 @@ export default async function deleteFile(execute = false, act, template) {
                 return { warning: `Target path does not exist.`, data };
         if (!execute)
             return { data };
-        fs.unlinkSync(data.target);
+        if (fs.existsSync(data.target))
+            fs.unlinkSync(data.target);
         return { success: true, data };
     }
     catch (e) {

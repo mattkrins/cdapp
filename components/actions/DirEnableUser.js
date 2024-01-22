@@ -1,6 +1,8 @@
 import ldap, { User } from "../../modules/ldap.js";
 import Handlebars from "../../modules/handlebars.js";
-export default async function enableUser(execute = false, act, template, connections, disable = false) {
+export default async function enableUser(execute = false, act, template, connections, 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+fileHandles, close, disable = false) {
     const action = act;
     const data = {};
     try {

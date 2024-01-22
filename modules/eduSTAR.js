@@ -110,15 +110,15 @@ export default class eduSTAR {
             const response = await this.client.post("/CookieAuth.dll?Logon", encoded);
             log.debug(response);
             if (!response || !response.data)
-                throw (Error("No response."));
+                throw Error("No response.");
             const cookies = await this.jar.getCookies(response.config.baseURL);
             if (!cookies || cookies.length <= 0) {
                 const dom = new JSDOM(response.data);
                 const error = dom.window.document.querySelector('.wrng');
                 if (error && error.textContent) {
-                    throw (Error(error.textContent));
+                    throw Error(error.textContent);
                 }
-                throw (Error("Unknown Error."));
+                throw Error("Unknown Error.");
             }
             this.username = username;
         }
@@ -162,13 +162,33 @@ export default class eduSTAR {
         try {
             const response = await this.client.get(`/edustarmc/api/MC/GetStudents/${this.school}/FULL`);
             if (!response || !response.data || typeof (response.data) !== "object")
-                throw (Error("No response."));
+                throw Error("No response.");
             this.cache(response.data);
             return response.data;
         }
         catch (e) {
             if (e.response.data.Message && e.response.data.Message.includes("Object reference"))
-                throw (Error("Incorrect School ID."));
+                throw Error("Incorrect School ID.");
+            throw e;
+        }
+    }
+    async upload(payload) {
+        try {
+            const data = { "_schoolId": this.school, "_rows": payload };
+            const response = await this.client.post(`/edustarmc/api/MC/BulkSetPasswordCSV`, data);
+            if (!response || !response.data || typeof (response.data) !== "object")
+                throw Error("No response.");
+            const results = (response.data || []);
+            if (results.length <= 0)
+                throw Error("Invalid response."); //
+            const errors = results.filter(r => r._outcome !== "OK");
+            if (errors.length > 0)
+                throw new Error(`Error setting passwords: ${JSON.stringify(errors)}`);
+            return response.data;
+        }
+        catch (e) {
+            if (e.response.data.Message && e.response.data.Message.includes("Object reference"))
+                throw Error("Incorrect School ID.");
             throw e;
         }
     }

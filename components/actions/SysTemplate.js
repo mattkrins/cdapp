@@ -1,4 +1,5 @@
 import Handlebars from "../../modules/handlebars.js";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export default async function templateData(execute = false, act, template) {
     const action = act;
     try {

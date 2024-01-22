@@ -37,7 +37,7 @@ async function runSchedule(schedule) {
             if (!rules.includes(rule.name))
                 continue;
             const matches = await findMatches(schema, rule);
-            const actionable = matches.filter(a => a.actionable).map(a => a.id);
+            const actionable = matches.matches.filter(a => a.actionable).map(a => a.id);
             if (actionable.length <= 0)
                 continue;
             await runActionFor(schema, rule, actionable);
