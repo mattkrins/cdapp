@@ -18,40 +18,47 @@ async function buildHeaders(connectors) {
     }
     return headers;
 }
+export async function cacheSchema(name) {
+    const schemasPath = `${path}/schemas`;
+    const filePath = `${schemasPath}/${name}/schema.yaml`;
+    const yaml = readYAML(filePath);
+    const connectors = readYAML(`${schemasPath}/${name}/connectors.yaml`) || [];
+    const _connectors = connectors.reduce((acc, c) => (acc[c.name] = c, acc), {});
+    const rules = readYAML(`${schemasPath}/${name}/rules.yaml`) || [];
+    const _rules = rules.reduce((acc, r) => (acc[r.name] = r, acc), {});
+    let headers = {};
+    const errors = []; //REVIEW - Janky way of handling errors. Should think of a better way.
+    try {
+        headers = await buildHeaders(connectors);
+    }
+    catch (e) {
+        errors.push(_Error(e).message);
+    }
+    const schema = {
+        ...yaml,
+        connectors,
+        _connectors,
+        rules,
+        _rules,
+        headers,
+        errors,
+    };
+    if (_schemas[yaml.name]) { // already cached
+        schemas = schemas.map(s => s.name !== name ? s : schema);
+    }
+    else {
+        schemas.push(schema);
+    }
+    _schemas[yaml.name] = schema;
+    return schema;
+}
 export async function initSchemaCache() {
     schemas = [];
     _schemas = {};
     const schemasPath = `${path}/schemas`;
-    if (!fs.existsSync(schemasPath))
-        fs.mkdirSync(schemasPath);
     const files = fs.readdirSync(schemasPath);
-    for (const name of files) {
-        const filePath = `${schemasPath}/${name}/schema.yaml`;
-        const yaml = readYAML(filePath);
-        const connectors = readYAML(`${schemasPath}/${name}/connectors.yaml`) || [];
-        const _connectors = connectors.reduce((acc, c) => (acc[c.name] = c, acc), {});
-        const rules = readYAML(`${schemasPath}/${name}/rules.yaml`) || [];
-        const _rules = rules.reduce((acc, r) => (acc[r.name] = r, acc), {});
-        let headers = {};
-        const errors = [];
-        try {
-            headers = await buildHeaders(connectors);
-        }
-        catch (e) {
-            errors.push(_Error(e).message);
-        }
-        const schema = {
-            ...yaml,
-            connectors,
-            _connectors,
-            rules,
-            _rules,
-            headers,
-            errors,
-        };
-        _schemas[yaml.name] = schema;
-        schemas.push(schema);
-    }
+    for (const name of files)
+        await cacheSchema(name);
 }
 export function getSchema(name, reply) {
     if ((name in _schemas))
@@ -63,6 +70,17 @@ export function getSchema(name, reply) {
 export default function schema(route) {
     initSchemaCache();
     const schemasPath = `${path}/schemas`;
+    function createSchema(name) {
+        const folderPath = `${schemasPath}/${name}`;
+        fs.mkdirSync(folderPath);
+        const schema = { name, version: 0.4, connectors: [], _connectors: {}, rules: [], _rules: {}, headers: {}, errors: [] };
+        writeYAML(schema, `${folderPath}/schema.yaml`);
+        writeYAML('', `${folderPath}/rules.yaml`);
+        writeYAML('', `${folderPath}/connectors.yaml`);
+        _schemas[name] = schema;
+        schemas.push(schema);
+        return schema;
+    }
     route.get('/', async () => schemas);
     route.post('/', form({
         name: validWindowsFilename('Invalid schema name.'),
@@ -71,15 +89,7 @@ export default function schema(route) {
             const { name } = request.body;
             if (name in _schemas)
                 throw reply.code(409).send({ validation: { name: "Schema name taken." } });
-            const folderPath = `${schemasPath}/${name}`;
-            fs.mkdirSync(folderPath);
-            const schema = { name, version: 0.4, connectors: [], _connectors: {}, rules: [], _rules: {}, headers: {} };
-            writeYAML(schema, `${folderPath}/schema.yaml`);
-            writeYAML('', `${folderPath}/rules.yaml`);
-            writeYAML('', `${folderPath}/connectors.yaml`);
-            _schemas[name] = schema;
-            schemas.push(schema);
-            return schema;
+            return createSchema(name);
         }
         catch (e) {
             const error = _Error(e);
@@ -106,27 +116,43 @@ export default function schema(route) {
             reply.code(500).send({ error: error.message });
         }
     });
+    async function importSchema(oldSchema, request) {
+        const name = oldSchema.name;
+        const { buffer } = request.file;
+        const zip = new AdmZip(buffer);
+        const zipEntries = zip.getEntries();
+        const schemaFile = zipEntries.filter(e => e.entryName === "schema.yaml");
+        if (schemaFile.length <= 0)
+            throw Error("Invalid schema structure.");
+        const contents = schemaFile[0].getData().toString("utf8");
+        const yaml = YAML.parse(contents);
+        const folderPath = `${path}/schemas/${name}`;
+        zip.extractAllTo(folderPath, true);
+        const mutated = { ...oldSchema, ...yaml, name };
+        writeYAML(mutated, `${folderPath}/schema.yaml`);
+        return await cacheSchema(name);
+    }
     const storage = multer.memoryStorage();
     const upload = multer({ storage: storage });
     route.register(multer.contentParser);
+    route.post('/import', {
+        preValidation: upload.single('file'),
+        ...form({
+            name: validWindowsFilename('Invalid schema name.'),
+        })
+    }, async (request, reply) => {
+        const { name } = request.body;
+        if (name in _schemas)
+            throw reply.code(409).send({ validation: { name: "Schema name taken." } });
+        createSchema(name);
+        const schema = getSchema(name, reply);
+        return await importSchema(schema, request);
+    });
     route.post('/:name/import', { preValidation: upload.single('file') }, async (request, reply) => {
         const { name } = request.params;
         try {
             const schema = getSchema(name, reply);
-            const { buffer } = request.file;
-            const zip = new AdmZip(buffer);
-            const zipEntries = zip.getEntries();
-            const schemaFile = zipEntries.filter(e => e.entryName === "schema.yaml");
-            if (schemaFile.length <= 0)
-                throw Error("Invalid schema structure.");
-            const contents = schemaFile[0].getData().toString("utf8");
-            const yaml = YAML.parse(contents);
-            const folderPath = `${path}/schemas/${name}`;
-            zip.extractAllTo(folderPath, true);
-            const mutated = { ...schema, ...yaml, name };
-            writeYAML(mutated, `${folderPath}/schema.yaml`);
-            _schemas[name] = mutated;
-            schemas = schemas.map(s => s.name !== name ? s : mutated);
+            await importSchema(schema, request);
             return true;
         }
         catch (e) {
@@ -137,7 +163,10 @@ export default function schema(route) {
     route.get('/:name', async (request, reply) => {
         const { name } = request.params;
         try {
-            return getSchema(name, reply);
+            let schema = getSchema(name, reply);
+            if (schema.errors.length > 0)
+                schema = await cacheSchema(name); // Update cache in case error was fixed.
+            return schema;
         }
         catch (e) {
             const error = _Error(e);
